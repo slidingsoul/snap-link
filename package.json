@@ -1,0 +1,7 @@
+{
+  "name": "snap-link",
+  "description": "Production-ready URL shortener service",
+  "version": "1.0.0",
+  "author": "slidingsoul",
+  "license": "MIT"
+}
