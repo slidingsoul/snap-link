@@ -1,4 +1,4 @@
-# Link Shortener API Documentation
+# Snap-Link API Documentation
 
 ## Overview
 RESTful API for creating and managing shortened URLs. Built with Fiber, GORM, and PostgreSQL.

@@ -1,4 +1,4 @@
-# Link Shortener Service
+# Snap Link
 
 A production-ready URL shortening service built with Go, Fiber, and PostgreSQL following clean architecture principles.
 
