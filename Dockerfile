@@ -16,7 +16,7 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o link-shortener .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o snap-link .
 
 # Final stage
 FROM alpine:latest
@@ -26,8 +26,8 @@ RUN apk --no-cache add ca-certificates
 WORKDIR /root/
 
 # Copy the binary from builder
-COPY --from=builder /app/link-shortener .
+COPY --from=builder /app/snap-link .
 
 EXPOSE 8080
 
-CMD ["./link-shortener"]
+CMD ["./snap-link"]

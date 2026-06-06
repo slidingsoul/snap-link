@@ -25,9 +25,9 @@ install-deps:
 	go mod tidy
 
 build:
-	@echo "Building link-shortener..."
-	go build -o link-shortener .
-	@echo "Build complete: ./link-shortener"
+	@echo "Building snap-link..."
+	go build -o snap-link .
+	@echo "Build complete: ./snap-link"
 
 run:
 	@echo "Starting server..."
@@ -61,7 +61,7 @@ lint:
 
 docker-build:
 	@echo "Building Docker image..."
-	docker build -t link-shortener:latest .
+	docker build -t snap-link:latest .
 
 docker-run:
 	@echo "Starting Docker containers..."
@@ -84,7 +84,7 @@ docker-clean:
 
 clean:
 	@echo "Cleaning up..."
-	rm -f link-shortener
+	rm -f snap-link
 	go clean
 	@echo "Clean complete"
 
@@ -110,5 +110,5 @@ setup: install-deps setup-env
 # Production build
 prod-build: clean install-deps
 	@echo "Building production binary..."
-	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o link-shortener .
-	@echo "Production build complete: ./link-shortener"
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o snap-link .
+	@echo "Production build complete: ./snap-link"

@@ -85,8 +85,8 @@ func main() {
 
 	// Initialize Fiber app
 	app := fiber.New(fiber.Config{
-		AppName:      "Link Shortener Service",
-		ServerHeader: "Link-Shortener/1.0",
+		AppName:      "Snap Link Service",
+		ServerHeader: "snap-link/1.0",
 	})
 
 	// Middleware

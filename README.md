@@ -43,7 +43,7 @@ A production-ready URL shortening service built with Go, Fiber, and PostgreSQL f
 
 ```bash
 git clone <repository-url>
-cd link-shortener
+cd snap-link
 cp .env.example .env
 ```
 
@@ -186,8 +186,8 @@ Structured logging for all operations:
 3. Set environment variables:
    - `PORT=8080` (or keep default)
    - `DATABASE_URL=postgresql://...`
-4. Set build command: `go build -o link-shortener`
-5. Set start command: `./link-shortener`
+4. Set build command: `go build -o snap-link`
+5. Set start command: `./snap-link`
 
 ### Docker (Local Development)
 
@@ -199,12 +199,12 @@ docker-compose up -d
 
 ```bash
 # Build
-go build -o link-shortener
+go build -o snap-link
 
 # Set environment and run
 export DATABASE_URL="postgresql://..."
 export PORT=8080
-./link-shortener
+./snap-link
 ```
 
 ## Production Considerations
