@@ -81,13 +81,11 @@ curl -X POST http://localhost:8081/snap \
 
 ---
 
-### 2. Get Original URL
+### 2. Follow Short Link
 
 **GET** `/:shortCode`
 
-Retrieves the original URL and metadata for a given short code.
-NOTE: returns JSON by design. If you want classic shortener behavior,
-issue a `302` to `original_url` client-side.
+Issues a `302 Found` redirect to the original URL.
 
 **Validation:** `shortCode` must be 4-10 alphanumeric chars, else `400`.
 
@@ -96,13 +94,10 @@ issue a `302` to `original_url` client-side.
 |-----------|------|-------------|
 | shortCode | string | The 6-character short code |
 
-#### Response (200 OK)
-```json
-{
-  "original_url": "https://example.com/very/long/url",
-  "short_code": "abc123",
-  "created_at": "2024-01-15T10:30:00Z"
-}
+#### Response (302 Found)
+```
+HTTP/1.1 302 Found
+Location: https://example.com/very/long/url
 ```
 
 #### Error Responses
@@ -116,14 +111,11 @@ issue a `302` to `original_url` client-side.
 
 #### Example
 ```bash
-curl http://localhost:8081/abc123
+curl -i http://localhost:8081/abc123
 
 # Response:
-# {
-#   "original_url":"https://github.com/golang/go",
-#   "short_code":"xYz9Qk",
-#   "created_at":"2024-01-15T10:30:00Z"
-# }
+# HTTP/1.1 302 Found
+# Location: https://github.com/golang/go
 ```
 
 ---
@@ -172,22 +164,15 @@ Content-Length: 19
 {"link":"Kp8mQw"}
 ```
 
-### Example 2: Retrieving Original URL
+### Example 2: Following a Short Link
 ```bash
 # Request
 GET /Kp8mQw HTTP/1.1
 Host: localhost:8081
 
 # Response
-HTTP/1.1 200 OK
-Content-Type: application/json
-Content-Length: 129
-
-{
-  "original_url":"https://www.example.com/products/laptop",
-  "short_code":"Kp8mQw",
-  "created_at":"2024-01-15T14:22:30.123456Z"
-}
+HTTP/1.1 302 Found
+Location: https://www.example.com/products/laptop
 ```
 
 ### Example 3: Invalid URL
@@ -212,8 +197,9 @@ Content-Type: application/json
 
 | Status Code | Description |
 |------------|-------------|
-| 200 OK | Request successful |
+| 200 OK | Request successful (`GET /health`) |
 | 201 Created | Resource created successfully |
+| 302 Found | Redirect to original URL (`GET /:shortCode`) |
 | 400 Bad Request | Invalid input or request format |
 | 401 Unauthorized | Missing/invalid/expired Neon JWT |
 | 404 Not Found | Resource not found |
@@ -276,15 +262,13 @@ Not applicable for current endpoints.
 
 ## Response Format
 
-All responses are in JSON format with proper HTTP status codes.
+JSON for API responses (`POST /snap`, errors); `GET /:shortCode`
+responds with a `302` redirect (`Location` header) instead of a body.
 
 ### Success Response Structure
 ```json
 {
-  "link": "value",
-  "original_url": "value",
-  "short_code": "value",
-  "created_at": "value"
+  "link": "value"
 }
 ```
 

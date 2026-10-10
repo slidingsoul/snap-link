@@ -64,10 +64,8 @@ func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
 	})
 }
 
-// GetOriginalURL handles GET /:shortCode endpoint
-// Returns the original URL metadata for a given short code.
-// NOTE: this API returns JSON by design; use a 302 redirect here
-// if you want classic shortener behavior (see README).
+// GetOriginalURL handles GET /:shortCode endpoint.
+// Issues a 302 Found redirect to the original URL (classic shortener behavior).
 func (lc *LinkController) GetOriginalURL(c *fiber.Ctx) error {
 	shortCode := c.Params("shortCode")
 
@@ -89,11 +87,7 @@ func (lc *LinkController) GetOriginalURL(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(http.StatusOK).JSON(fiber.Map{
-		"original_url": link.OriginalURL,
-		"short_code":   link.ShortCode,
-		"created_at":   link.CreatedAt,
-	})
+	return c.Redirect(link.OriginalURL, fiber.StatusFound)
 }
 
 // HealthCheck handles GET /health endpoint for deployment monitoring.

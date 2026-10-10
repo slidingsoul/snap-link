@@ -96,8 +96,18 @@ func TestGetByShortCodeStatuses(t *testing.T) {
 	app := setupBehaviorApp(t)
 	_, created := doReq(t, app, "POST", "/snap", map[string]string{"link": "https://example.com/b"})
 	code := created["link"].(string)
-	if sc, _ := doReq(t, app, "GET", "/"+code, nil); sc != 200 {
-		t.Errorf("existing code: got %d, want 200", sc)
+	// Existing code -> 302 redirect with Location header (no redirect follow).
+	req := httptest.NewRequest("GET", "/"+code, nil)
+	resp, err := app.Test(req, -1)
+	if err != nil {
+		t.Fatalf("app.Test error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 302 {
+		t.Errorf("existing code: got %d, want 302", resp.StatusCode)
+	}
+	if loc := resp.Header.Get("Location"); loc != "https://example.com/b" {
+		t.Errorf("Location = %q, want %q", loc, "https://example.com/b")
 	}
 	if sc, _ := doReq(t, app, "GET", "/abcdef", nil); sc != 404 {
 		t.Errorf("missing code: got %d, want 404", sc)

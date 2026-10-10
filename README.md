@@ -109,22 +109,19 @@ curl -X POST http://localhost:8081/snap \
 }
 ```
 
-### GET /:shortCode - Retrieve Original URL
+### GET /:shortCode - Follow Short Link
 
-Get the original URL and metadata for a short code.
+Issues a `302 Found` redirect to the original URL.
 
 **Request:**
 ```bash
-curl http://localhost:8081/abc123
+curl -i http://localhost:8081/abc123
 ```
 
 **Response:**
-```json
-{
-  "original_url": "https://example.com/very/long/url",
-  "short_code": "abc123",
-  "created_at": "2024-01-15T10:30:00Z"
-}
+```
+HTTP/1.1 302 Found
+Location: https://example.com/very/long/url
 ```
 
 ### GET /health - Health Check
