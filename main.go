@@ -19,7 +19,6 @@ import (
 	"github.com/slidingsoul/snap-link/internal/auth"
 	"github.com/slidingsoul/snap-link/internal/ratelimit"
 	"github.com/slidingsoul/snap-link/middleware"
-	"github.com/slidingsoul/snap-link/models"
 	"github.com/slidingsoul/snap-link/repository"
 	"github.com/slidingsoul/snap-link/service"
 	"gorm.io/driver/postgres"
@@ -75,14 +74,18 @@ func main() {
 
 	log.Println("Database connection established successfully")
 
-	// NOTE: AutoMigrate is convenient for this small service but has no
-	// versioning/rollback. For larger prod schemas use golang-migrate/atlas.
+	// Schema is owned by migrations/ (golang-migrate, applied manually — see
+	// README "Run Migrations"). The app never runs DDL itself; it only verifies
+	// the expected tables exist so a missing migration fails fast with a
+	// clear message instead of obscure query errors at request time.
 	// NOTE: a legacy `lookups` table may exist in the DB; it is no longer used.
-	if err := db.AutoMigrate(&models.Link{}); err != nil {
-		log.Fatalf("Failed to auto-migrate database: %v", err)
+	var tableExists bool
+	if err := db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'links')").Scan(&tableExists).Error; err != nil {
+		log.Fatalf("Failed to check schema: %v", err)
 	}
-
-	log.Println("Database migration completed successfully")
+	if !tableExists {
+		log.Fatal("links table not found: apply migrations/ to DATABASE_URL first (see README)")
+	}
 
 	// Initialize repository, service, and controller layers
 	linkRepo := repository.NewLinkRepository(db)

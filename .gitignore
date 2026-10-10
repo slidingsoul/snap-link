@@ -38,6 +38,7 @@ vendor/
 
 # Build output
 snap-link
+bin/
 dist/
 build/
 
