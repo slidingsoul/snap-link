@@ -42,11 +42,6 @@ func main() {
 		log.Fatal("DATABASE_URL environment variable is required")
 	}
 
-	apiKey := os.Getenv("API_KEY")
-	if apiKey == "" {
-		log.Fatal("API_KEY environment variable is required")
-	}
-
 	// Initialize database connection
 	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
 	if err != nil {
@@ -78,7 +73,7 @@ func main() {
 	// Initialize repository, service, and controller layers
 	linkRepo := repository.NewLinkRepository(db)
 	linkService := service.NewLinkService(linkRepo)
-	linkController := controller.NewLinkController(linkService, apiKey)
+	linkController := controller.NewLinkController(linkService)
 
 	// Initialize Fiber app with production-safe defaults.
 	app := fiber.New(fiber.Config{

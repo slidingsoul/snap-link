@@ -28,7 +28,7 @@ func TestNewLinkController(t *testing.T) {
 	db := setupTestDB(t)
 	repo := repository.NewLinkRepository(db)
 	svc := service.NewLinkService(repo)
-	controller := NewLinkController(svc, "test-api-key")
+	controller := NewLinkController(svc)
 
 	if controller == nil {
 		t.Errorf("NewLinkController() returned nil")
@@ -39,7 +39,7 @@ func TestControllerMethods(t *testing.T) {
 	db := setupTestDB(t)
 	repo := repository.NewLinkRepository(db)
 	svc := service.NewLinkService(repo)
-	controller := NewLinkController(svc, "test-api-key")
+	controller := NewLinkController(svc)
 
 	// Verify controller is properly initialized
 	if controller == nil {
@@ -54,7 +54,7 @@ func TestControllerRoutes(t *testing.T) {
 	db := setupTestDB(t)
 	repo := repository.NewLinkRepository(db)
 	svc := service.NewLinkService(repo)
-	controller := NewLinkController(svc, "test-api-key")
+	controller := NewLinkController(svc)
 
 	app := fiber.New()
 

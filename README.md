@@ -32,8 +32,7 @@ A production-ready URL shortening service built with Go, Fiber, and PostgreSQL f
 ├── service/
 │   └── link_service.go          # Business logic + URL validation (delegates code check)
 └── controller/
-    ├── link_controller.go       # HTTP handlers layer
-    └── auth.go                  # Constant-time API key check
+    └── link_controller.go       # HTTP handlers layer (public, rate-limited)
 ```
 
 ## Prerequisites
@@ -60,7 +59,6 @@ Edit `.env` with your database configuration:
 ```env
 PORT=8081
 DATABASE_URL=postgres://username:password@localhost:5432/link_shortener
-API_KEY=your-secret-api-key-here
 ```
 
 For **Neon DB**:
@@ -191,8 +189,7 @@ Structured logging for all operations:
 2. Create a new Web Service (or `render.yaml` blueprint)
 3. Set environment variables:
    - `PORT=8081` (or keep default)
-   - `DATABASE_URL=postgresql://...` (or attached DB)
-   - `API_KEY` (generated or set manually; needed for clients)
+   - `DATABASE_URL=postgresql://...` (Neon URL with `?sslmode=require`)
 4. Set build command: `go build -o snap-link`
 5. Set start command: `./snap-link`
 
@@ -200,7 +197,7 @@ Structured logging for all operations:
 
 ```bash
 docker compose up -d --build
-# App: http://localhost:8081/health (needs API_KEY in env)
+# App: http://localhost:8081/health
 ```
 
 ### Manual VPS Deployment
@@ -212,13 +209,12 @@ go build -o snap-link
 # Set environment and run
 export DATABASE_URL="postgresql://..."
 export PORT=8081
-export API_KEY="your-secret-key"
 ./snap-link
 ```
 
 ## Production Considerations
 
-- Rotate `API_KEY` regularly; `/snap` requires `X-API-KEY`
+- `POST /snap` is public; per-IP rate limiting (5/min) is the only guard
 - Enable SSL/TLS via reverse proxy (nginx, Caddy)
 - Monitor database connection pool
 - Rate limiting on /snap is fixed: 5/min per IP (see `internal/ratelimit`)

@@ -16,14 +16,13 @@ http://localhost:8081
 
 Creates a new shortened URL from a provided link.
 
-**Authentication:** Requires `X-API-KEY` header with valid API key (constant-time compare)
+**Authentication:** None — public endpoint.
 
 **Rate Limiting:** Fixed 5 requests per minute per IP (see `internal/ratelimit`).
 
 #### Request Headers
 ```
 Content-Type: application/json
-X-API-KEY: your-api-key
 ```
 
 #### Request Body
@@ -52,13 +51,6 @@ None
 }
 ```
 
-**401 Unauthorized** - Missing or invalid API key
-```json
-{
-  "error": "Missing or invalid X-API-KEY header"
-}
-```
-
 **429 Too Many Requests** - Rate limit exceeded
 ```json
 {
@@ -70,7 +62,6 @@ None
 ```bash
 curl -X POST http://localhost:8081/snap \
   -H "Content-Type: application/json" \
-  -H "X-API-KEY: your-api-key" \
   -d '{"link": "https://github.com/golang/go"}'
 
 # Response:
@@ -213,7 +204,6 @@ Content-Type: application/json
 | 200 OK | Request successful |
 | 201 Created | Resource created successfully |
 | 400 Bad Request | Invalid input or request format |
-| 401 Unauthorized | Missing or invalid API key |
 | 404 Not Found | Resource not found |
 | 429 Too Many Requests | Rate limit exceeded (fixed 5/min) |
 | 500 Internal Server Error | Server error |
@@ -235,17 +225,7 @@ Requests exceeding the limit will receive:
 
 ## Authentication
 
-API key authentication is required for POST `/snap`:
-- **Header:** `X-API-KEY`
-- **Format:** raw API key string (constant-time compare)
-- **Configuration:** Set via `API_KEY` environment variable
-
-Missing or invalid API key returns:
-```json
-{
-  "error": "Missing or invalid X-API-KEY header"
-}
-```
+None — `POST /snap` is public and guarded only by per-IP rate limiting.
 
 ## Pagination
 
@@ -304,7 +284,6 @@ All responses are in JSON format with proper HTTP status codes.
 |----------|---------|----------|-------------|
 | PORT | 8081 | No | HTTP server port |
 | DATABASE_URL | - | Yes | PostgreSQL connection string |
-| API_KEY | - | Yes | Required for /snap and /config/* (X-API-KEY header) |
 
 ## Best Practices
 

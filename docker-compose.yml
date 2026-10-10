@@ -7,7 +7,6 @@ services:
       # External DB (Neon): provide via env or .env file.
       # Example: postgresql://user:password@ep-xxxxx.neon.tech/dbname?sslmode=require
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      API_KEY: ${API_KEY:?API_KEY is required}
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
     healthcheck:

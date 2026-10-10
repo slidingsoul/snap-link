@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/slidingsoul/snap-link/models"
@@ -14,23 +15,17 @@ import (
 // LinkController handles HTTP requests for link operations
 type LinkController struct {
 	service *service.LinkService
-	apiKey  string
 }
 
 // NewLinkController creates a new instance of LinkController
-func NewLinkController(svc *service.LinkService, apiKey string) *LinkController {
-	return &LinkController{service: svc, apiKey: apiKey}
+func NewLinkController(svc *service.LinkService) *LinkController {
+	return &LinkController{service: svc}
 }
 
-// CreateShortLink handles POST /snap endpoint
-// Requires X-API-KEY header with valid API key
+// CreateShortLink handles POST /snap endpoint (public, rate-limited)
 // Request body: { "link": "https://example.com/very/long/url" }
 // Response: { "link": "abc123" } (short code) or full URL path
 func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
-	if !checkAPIKey(c.Get("X-API-KEY"), lc.apiKey) {
-		return unauthorized(c)
-	}
-
 	var req models.CreateLinkRequest
 
 	// Parse request body
@@ -113,4 +108,19 @@ func (lc *LinkController) HealthCheck(c *fiber.Ctx) error {
 	return c.Status(http.StatusOK).JSON(fiber.Map{
 		"status": "healthy",
 	})
+}
+
+// isValidationError reports client-caused errors that map to 400.
+func isValidationError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "invalid") ||
+		strings.Contains(msg, "required") ||
+		strings.Contains(msg, "cannot be empty") ||
+		strings.Contains(msg, "too long") ||
+		strings.Contains(msg, "must be") ||
+		strings.Contains(msg, "missing host") ||
+		strings.Contains(msg, "only http")
 }
