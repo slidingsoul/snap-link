@@ -16,9 +16,9 @@ http://localhost:8081
 
 Creates a new shortened URL from a provided link.
 
-**Authentication:** Requires `X-API-KEY` header with valid API key
+**Authentication:** Requires `X-API-KEY` header with valid API key (constant-time compare)
 
-**Rate Limiting:** 5 requests per minute per IP address
+**Rate Limiting:** Fixed 5 requests per minute per IP (see `internal/ratelimit`).
 
 #### Request Headers
 ```
@@ -68,7 +68,7 @@ None
 
 #### Example
 ```bash
-curl -X POST http://localhost:8080/snap \
+curl -X POST http://localhost:8081/snap \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: your-api-key" \
   -d '{"link": "https://github.com/golang/go"}'
@@ -84,6 +84,10 @@ curl -X POST http://localhost:8080/snap \
 **GET** `/:shortCode`
 
 Retrieves the original URL and metadata for a given short code.
+NOTE: returns JSON by design. If you want classic shortener behavior,
+issue a `302` to `original_url` client-side.
+
+**Validation:** `shortCode` must be 4-10 alphanumeric chars, else `400`.
 
 #### Path Parameters
 | Parameter | Type | Description |
@@ -110,7 +114,7 @@ Retrieves the original URL and metadata for a given short code.
 
 #### Example
 ```bash
-curl http://localhost:8080/abc123
+curl http://localhost:8081/abc123
 
 # Response:
 # {
@@ -126,7 +130,8 @@ curl http://localhost:8080/abc123
 
 **GET** `/health`
 
-Checks the health status of the API.
+Checks the health status of the API. Pings Postgres: returns `200 healthy`
+or `503 unhealthy` when the DB is unreachable.
 
 #### Response (200 OK)
 ```json
@@ -137,7 +142,7 @@ Checks the health status of the API.
 
 #### Example
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8081/health
 
 # Response:
 # {"status":"healthy"}
@@ -151,7 +156,7 @@ curl http://localhost:8080/health
 ```bash
 # Request
 POST /snap HTTP/1.1
-Host: localhost:8080
+Host: localhost:8081
 Content-Type: application/json
 Content-Length: 47
 
@@ -169,7 +174,7 @@ Content-Length: 19
 ```bash
 # Request
 GET /Kp8mQw HTTP/1.1
-Host: localhost:8080
+Host: localhost:8081
 
 # Response
 HTTP/1.1 200 OK
@@ -187,7 +192,7 @@ Content-Length: 129
 ```bash
 # Request
 POST /snap HTTP/1.1
-Host: localhost:8080
+Host: localhost:8081
 Content-Type: application/json
 
 {"link":"not a valid url"}
@@ -210,14 +215,15 @@ Content-Type: application/json
 | 400 Bad Request | Invalid input or request format |
 | 401 Unauthorized | Missing or invalid API key |
 | 404 Not Found | Resource not found |
-| 429 Too Many Requests | Rate limit exceeded (5 requests per minute) |
+| 429 Too Many Requests | Rate limit exceeded (fixed 5/min) |
 | 500 Internal Server Error | Server error |
+| 503 Service Unavailable | /health DB unreachable |
 
 ## Rate Limiting
 
 Rate limiting is implemented on the POST `/snap` endpoint:
-- **Limit:** 5 requests per minute
-- **Scope:** Per IP address
+- **Limit:** fixed 5 requests per minute (see `internal/ratelimit`)
+- **Scope:** Per IP address, fixed 1-minute window
 - **Response:** 429 Too Many Requests with error message
 
 Requests exceeding the limit will receive:
@@ -229,9 +235,9 @@ Requests exceeding the limit will receive:
 
 ## Authentication
 
-API key authentication is required for POST `/snap` endpoint:
+API key authentication is required for POST `/snap`:
 - **Header:** `X-API-KEY`
-- **Format:** Bearer token (API key string)
+- **Format:** raw API key string (constant-time compare)
 - **Configuration:** Set via `API_KEY` environment variable
 
 Missing or invalid API key returns:
@@ -296,16 +302,15 @@ All responses are in JSON format with proper HTTP status codes.
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| PORT | 8080 | No | HTTP server port |
+| PORT | 8081 | No | HTTP server port |
 | DATABASE_URL | - | Yes | PostgreSQL connection string |
-| LOG_LEVEL | info | No | Logging level (debug/info/warn/error) |
+| API_KEY | - | Yes | Required for /snap and /config/* (X-API-KEY header) |
 
 ## Best Practices
 
 1. **Always use HTTPS** in production
 2. **Validate URLs** before shortening
 3. **Handle rate limits** with exponential backoff
-4. **Cache frequent lookups** for performance
 5. **Monitor error rates** and latencies
 6. **Use connection pooling** for database
 7. **Implement proper logging** for debugging

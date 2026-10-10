@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/slidingsoul/snap-link/models"
+	"github.com/slidingsoul/snap-link/repository"
 	"github.com/slidingsoul/snap-link/service"
 )
 
@@ -25,12 +27,8 @@ func NewLinkController(svc *service.LinkService, apiKey string) *LinkController 
 // Request body: { "link": "https://example.com/very/long/url" }
 // Response: { "link": "abc123" } (short code) or full URL path
 func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
-	// Validate API key from X-API-KEY header
-	apiKey := c.Get("X-API-KEY")
-	if apiKey == "" || apiKey != lc.apiKey {
-		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
-			"error": "Missing or invalid X-API-KEY header",
-		})
+	if !checkAPIKey(c.Get("X-API-KEY"), lc.apiKey) {
+		return unauthorized(c)
 	}
 
 	var req models.CreateLinkRequest
@@ -54,8 +52,14 @@ func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
 	link, err := lc.service.CreateShortLink(req.Link)
 	if err != nil {
 		log.Printf("Error creating short link: %v", err)
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
-			"error": err.Error(),
+		// Validation errors -> 400 with safe message; DB/infra -> 500 generic.
+		if errors.Is(err, service.ErrInvalidURL) || isValidationError(err) {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid URL format",
+			})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to create short link",
 		})
 	}
 
@@ -65,20 +69,31 @@ func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
 	})
 }
 
-// GetOriginalURL handles GET /:shortCode endpoint (optional)
-// Returns the original URL for a given short code
+// GetOriginalURL handles GET /:shortCode endpoint
+// Returns the original URL metadata for a given short code.
+// NOTE: this API returns JSON by design; use a 302 redirect here
+// if you want classic shortener behavior (see README).
 func (lc *LinkController) GetOriginalURL(c *fiber.Ctx) error {
 	shortCode := c.Params("shortCode")
 
 	link, err := lc.service.GetLinkByShortCode(shortCode)
 	if err != nil {
 		log.Printf("Error retrieving link: %v", err)
-		return c.Status(http.StatusNotFound).JSON(fiber.Map{
-			"error": "Short link not found",
+		if errors.Is(err, repository.ErrNotFound) {
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{
+				"error": "Short link not found",
+			})
+		}
+		if errors.Is(err, service.ErrInvalidShortCode) || isValidationError(err) {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid short code",
+			})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to retrieve short link",
 		})
 	}
 
-	// Optionally redirect to original URL
 	return c.Status(http.StatusOK).JSON(fiber.Map{
 		"original_url": link.OriginalURL,
 		"short_code":   link.ShortCode,
@@ -86,8 +101,15 @@ func (lc *LinkController) GetOriginalURL(c *fiber.Ctx) error {
 	})
 }
 
-// HealthCheck handles GET /health endpoint for deployment monitoring
+// HealthCheck handles GET /health endpoint for deployment monitoring.
+// Pings the DB so orchestrators don't send traffic to a dead instance.
 func (lc *LinkController) HealthCheck(c *fiber.Ctx) error {
+	if err := lc.service.Ping(); err != nil {
+		log.Printf("Health check DB ping failed: %v", err)
+		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+			"status": "unhealthy",
+		})
+	}
 	return c.Status(http.StatusOK).JSON(fiber.Map{
 		"status": "healthy",
 	})

@@ -65,21 +65,21 @@ docker-build:
 
 docker-run:
 	@echo "Starting Docker containers..."
-	docker-compose up -d
+	docker compose up -d --build
 	@echo "Services started:"
-	@echo "  App: http://localhost:8080"
+	@echo "  App: http://localhost:$${PORT:-8081}/health"
 	@echo "  PostgreSQL: localhost:5432"
 	@echo "  Run 'make docker-logs' to view logs"
 
 docker-stop:
 	@echo "Stopping Docker containers..."
-	docker-compose down
+	docker compose down
 
 docker-logs:
-	docker-compose logs -f
+	docker compose logs -f
 
 docker-clean:
-	docker-compose down -v
+	docker compose down -v
 	@echo "Docker containers and volumes removed"
 
 clean:
@@ -105,7 +105,7 @@ setup: install-deps setup-env
 	@echo "  1. Edit .env with your database configuration"
 	@echo "  2. Run: make docker-run  (for PostgreSQL in Docker)"
 	@echo "  3. Run: make run         (to start the app)"
-	@echo "  4. Test: curl http://localhost:8080/health"
+	@echo "  4. Test: curl http://localhost:8081/health"
 
 # Production build
 prod-build: clean install-deps

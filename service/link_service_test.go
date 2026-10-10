@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/slidingsoul/snap-link/models"
@@ -24,6 +25,15 @@ func TestValidateURL(t *testing.T) {
 		{"URL without scheme", "example.com", "https://example.com", false}, // Should add https:// prefix
 		{"Invalid URL with spaces", "https://example .com", "", true},
 		{"URL localhost", "http://localhost:8080", "http://localhost:8080", false},
+		// Regression: 7-char input previously panicked on urlStr[:8].
+		{"7-char host without scheme", "example", "https://example", false},
+		{"Short input", "a", "https://a", false},
+		{"Missing host", "https://", "", true},
+		{"FTP scheme rejected", "ftp://example.com", "", true},
+		{"Javascript scheme rejected", "javascript:alert(1)", "", true},
+		{"Data scheme rejected", "data:text/plain,hi", "", true},
+		{"Uppercase scheme ok", "HTTPS://example.com", "HTTPS://example.com", false},
+		{"Whitespace trimmed", "  https://example.com  ", "https://example.com", false},
 	}
 
 	for _, tt := range tests {
@@ -83,4 +93,24 @@ func TestCreateShortLink(t *testing.T) {
 			t.Errorf("Expected OriginalURL to be 'https://example.com', got '%s'", link.OriginalURL)
 		}
 	})
+
+	t.Run("Reject non-http scheme", func(t *testing.T) {
+		if _, err := svc.CreateShortLink("ftp://example.com"); err == nil {
+			t.Errorf("Expected error for ftp scheme")
+		}
+	})
+}
+
+func TestValidateShortCodeDelegates(t *testing.T) {
+	// Full matrix lives in internal/shortcode; here we only assert the
+	// service wrapper accepts generated codes and preserves its sentinel
+	// error for controllers (errors.Is with ErrInvalidShortCode).
+	if err := ValidateShortCode("abc123"); err != nil {
+		t.Errorf("ValidateShortCode valid: %v", err)
+	}
+	if err := ValidateShortCode("ab"); err == nil {
+		t.Errorf("ValidateShortCode invalid: expected error, got nil")
+	} else if !errors.Is(err, ErrInvalidShortCode) {
+		t.Errorf("ValidateShortCode error should wrap ErrInvalidShortCode, got: %v", err)
+	}
 }

@@ -1,14 +1,18 @@
-version: '3.8'
-
 services:
   app:
     build: .
     container_name: snap-link-app
     environment:
       PORT: ${PORT:-8081}
+      # External DB (Neon): provide via env or .env file.
+      # Example: postgresql://user:password@ep-xxxxx.neon.tech/dbname?sslmode=require
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       API_KEY: ${API_KEY:?API_KEY is required}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:$${PORT:-8081}/health || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
     restart: unless-stopped

@@ -1,14 +1,19 @@
 package repository
 
 import (
-	"crypto/rand"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 
+	"github.com/slidingsoul/snap-link/internal/shortcode"
 	"github.com/slidingsoul/snap-link/models"
 	"gorm.io/gorm"
 )
+
+// ErrNotFound is returned when a short code does not exist.
+// Controllers use errors.Is to map it to 404 without leaking internals.
+var ErrNotFound = errors.New("link not found")
 
 // LinkRepository handles database operations for links
 type LinkRepository struct {
@@ -22,7 +27,7 @@ func NewLinkRepository(db *gorm.DB) *LinkRepository {
 
 // Create saves a new link to the database with a generated short code
 func (r *LinkRepository) Create(originalURL string) (*models.Link, error) {
-	shortCode, err := generateShortCode()
+	shortCode, err := shortcode.Generate()
 	if err != nil {
 		log.Printf("Error generating short code: %v", err)
 		return nil, fmt.Errorf("failed to generate short code: %w", err)
@@ -47,7 +52,7 @@ func (r *LinkRepository) Create(originalURL string) (*models.Link, error) {
 			strings.Contains(errStr, "duplicate key") ||
 			strings.Contains(errStr, "23505") {
 			// Generate a new short code and retry
-			shortCode, err = generateShortCode()
+			shortCode, err = shortcode.Generate()
 			if err != nil {
 				log.Printf("Error generating new short code on retry %d: %v", i, err)
 				return nil, fmt.Errorf("failed to generate short code after retries: %w", err)
@@ -63,35 +68,25 @@ func (r *LinkRepository) Create(originalURL string) (*models.Link, error) {
 	return nil, fmt.Errorf("failed to create link after %d retries due to collision", maxRetries)
 }
 
+// Ping verifies the database connection is alive (for /health).
+func (r *LinkRepository) Ping() error {
+	sqlDB, err := r.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+}
+
 // GetByShortCode retrieves a link by its short code
 func (r *LinkRepository) GetByShortCode(shortCode string) (*models.Link, error) {
 	var link models.Link
 	result := r.db.Where("short_code = ?", shortCode).First(&link)
 	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("link not found")
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
 		}
 		log.Printf("Error retrieving link: %v", result.Error)
 		return nil, fmt.Errorf("failed to retrieve link: %w", result.Error)
 	}
 	return &link, nil
-}
-
-// generateShortCode generates a collision-resistant random alphanumeric short code
-// Uses 6-8 characters from a 62-character alphabet (A-Z, a-z, 0-9)
-func generateShortCode() (string, error) {
-	const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	const codeLength = 6
-
-	code := make([]byte, codeLength)
-	for i := 0; i < codeLength; i++ {
-		randomIndex := make([]byte, 1)
-		_, err := rand.Read(randomIndex)
-		if err != nil {
-			return "", err
-		}
-		code[i] = charset[int(randomIndex[0])%len(charset)]
-	}
-
-	return string(code), nil
 }

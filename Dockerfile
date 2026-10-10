@@ -21,13 +21,20 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o snap-link .
 # Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates wget && \
+    addgroup -S appgroup && adduser -S appuser -G appgroup
 
-WORKDIR /root/
+WORKDIR /app
 
 # Copy the binary from builder
 COPY --from=builder /app/snap-link .
 
+# Run as non-root (least privilege)
+USER appuser
+
 EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8081}/health || exit 1
 
 CMD ["./snap-link"]

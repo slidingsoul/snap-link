@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/joho/godotenv"
 	"github.com/slidingsoul/snap-link/controller"
+	"github.com/slidingsoul/snap-link/internal/ratelimit"
+	"github.com/slidingsoul/snap-link/middleware"
 	"github.com/slidingsoul/snap-link/models"
 	"github.com/slidingsoul/snap-link/repository"
 	"github.com/slidingsoul/snap-link/service"
@@ -25,10 +31,10 @@ func main() {
 		log.Println("Warning: .env file not found, using system environment variables")
 	}
 
-	// Load environment variables
+	// Load environment variables (defaults unified to 8081: see .env.example, Dockerfile, compose)
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "8081"
 	}
 
 	databaseURL := os.Getenv("DATABASE_URL")
@@ -47,81 +53,85 @@ func main() {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
 
+	// Bound the pool so one deploy can't exhaust Postgres.
+	// Why: GORM defaults to unlimited opens; under burst traffic
+	// you get "too many connections" instead of graceful queueing.
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(25)
+		sqlDB.SetMaxIdleConns(5)
+		sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	} else {
+		log.Printf("Warning: could not configure connection pool: %v", err)
+	}
+
 	log.Println("Database connection established successfully")
 
-	// Auto-migrate the Link and Lookup models
-	if err := db.AutoMigrate(&models.Link{}, &models.Lookup{}); err != nil {
+	// NOTE: AutoMigrate is convenient for this small service but has no
+	// versioning/rollback. For larger prod schemas use golang-migrate/atlas.
+	// NOTE: a legacy `lookups` table may exist in the DB; it is no longer used.
+	if err := db.AutoMigrate(&models.Link{}); err != nil {
 		log.Fatalf("Failed to auto-migrate database: %v", err)
 	}
 
 	log.Println("Database migration completed successfully")
 
-	// Initialize lookup repository and service
-	lookupRepo := repository.NewLookupRepository(db)
-	lookupService := service.NewLookupService(lookupRepo)
-
-	// Seed initial lookup values if they don't exist
-	if _, err := lookupService.GetLookupValue("LINK_PER_MINUTE"); err != nil {
-		// Value doesn't exist, create it
-		_, err := lookupService.UpdateLookupValue("LINK_PER_MINUTE", "5")
-		if err != nil {
-			log.Fatalf("Failed to seed LINK_PER_MINUTE lookup: %v", err)
-		}
-		log.Println("Initialized LINK_PER_MINUTE lookup to 5")
-	}
-
-	// Load rate limit from database
-	rateLimit, err := lookupService.GetLookupValueAsInt("LINK_PER_MINUTE")
-	if err != nil {
-		log.Fatalf("Failed to load rate limit from database: %v", err)
-	}
-	log.Printf("Loaded rate limit from database: %d requests per minute", rateLimit)
-
 	// Initialize repository, service, and controller layers
 	linkRepo := repository.NewLinkRepository(db)
 	linkService := service.NewLinkService(linkRepo)
 	linkController := controller.NewLinkController(linkService, apiKey)
-	lookupController := controller.NewLookupController(lookupService, apiKey)
 
-	// Initialize Fiber app
+	// Initialize Fiber app with production-safe defaults.
 	app := fiber.New(fiber.Config{
 		AppName:      "Snap Link Service",
-		ServerHeader: "snap-link/1.0",
+		ServerHeader: "", // don't leak implementation/version
+		BodyLimit:    16 * 1024,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		IdleTimeout:  60 * time.Second,
+		// Behind Render/reverse proxy the client IP arrives in X-Forwarded-For.
+		// Needed so per-IP rate limiting sees real clients, not the proxy.
+		// NOTE: clients can spoof this header if they reach the app directly;
+		// front with a proxy that overwrites it in that setup.
+		ProxyHeader: "X-Forwarded-For",
 	})
 
 	// Middleware
 	app.Use(recover.New())
+	app.Use(requestid.New())
+	app.Use(helmet.New())
 	app.Use(logger.New(logger.Config{
-		Format: "[${time}] ${status} - ${method} ${path}\n",
+		Format: "[${time}] ${status} - ${method} ${path} (${latency}) ${locals:requestid}\n",
 	}))
 
-	// Rate limiter for /snap endpoint with dynamic limit from database
-	rateLimiter := limiter.New(limiter.Config{
-		Max:        rateLimit,
-		Expiration: 1 * time.Minute,
-		KeyGenerator: func(c *fiber.Ctx) string {
-			return c.IP()
-		},
-		LimitReached: func(c *fiber.Ctx) error {
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error": fmt.Sprintf("Rate limit exceeded: %d requests per minute allowed", rateLimit),
-			})
-		},
-	})
+	// Fixed per-IP rate limiter for /snap (see internal/ratelimit).
+	rateLimiter := middleware.NewLimiter(ratelimit.DefaultPerMinute)
 
-	// Routes
+	// Routes — order matters: /health must be registered
+	// before /:shortCode so the wildcard doesn't swallow it.
 	app.Get("/health", linkController.HealthCheck)
-	app.Post("/snap", rateLimiter, linkController.CreateShortLink)
+	app.Post("/snap", rateLimiter.Handler(), linkController.CreateShortLink)
+
 	app.Get("/:shortCode", linkController.GetOriginalURL)
 
-	// Config routes
-	app.Put("/config/lookup", lookupController.UpdateLookup)
-	app.Get("/config/lookup/:key", lookupController.GetLookup)
+	// Graceful shutdown: finish in-flight requests on SIGINT/SIGTERM.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
-	// Start server
-	serverAddr := fmt.Sprintf(":%s", port)
-	log.Printf("Starting server on http://0.0.0.0:%s", port)
-	if err := app.Listen(serverAddr); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	go func() {
+		serverAddr := fmt.Sprintf(":%s", port)
+		log.Printf("Starting server on http://0.0.0.0:%s", port)
+		if err := app.Listen(serverAddr); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	}()
+
+	<-ctx.Done()
+	log.Println("Shutdown signal received, draining connections...")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = shutdownCtx // fiber Shutdown has its own timeout below
+	if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
+		log.Printf("Graceful shutdown failed: %v", err)
 	}
+	log.Println("Server stopped")
 }

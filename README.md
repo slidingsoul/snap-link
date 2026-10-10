@@ -20,14 +20,20 @@ A production-ready URL shortening service built with Go, Fiber, and PostgreSQL f
 ├── main.go                      # Application entry point
 ├── go.mod                       # Go module dependencies
 ├── .env.example                 # Environment variables template
+├── middleware/
+│   └── rate_limit.go            # Fixed per-IP limiter (internal/ratelimit)
+├── internal/
+│   ├── shortcode/               # Single source: Charset, Generate, Validate
+│   └── ratelimit/               # Fixed limit: DefaultPerMinute = 5
 ├── models/
 │   └── link.go                  # Link model and request/response DTOs
 ├── repository/
 │   └── link_repository.go       # Database operations layer
 ├── service/
-│   └── link_service.go          # Business logic layer
+│   └── link_service.go          # Business logic + URL validation (delegates code check)
 └── controller/
-    └── link_controller.go       # HTTP handlers layer
+    ├── link_controller.go       # HTTP handlers layer
+    └── auth.go                  # Constant-time API key check
 ```
 
 ## Prerequisites
@@ -52,9 +58,9 @@ cp .env.example .env
 Edit `.env` with your database configuration:
 
 ```env
-PORT=8080
+PORT=8081
 DATABASE_URL=postgres://username:password@localhost:5432/link_shortener
-LOG_LEVEL=info
+API_KEY=your-secret-api-key-here
 ```
 
 For **Neon DB**:
@@ -75,7 +81,7 @@ go mod tidy
 go run main.go
 ```
 
-The server will start on `http://localhost:8080`
+The server will start on `http://localhost:8081`
 
 ## API Endpoints
 
@@ -85,7 +91,7 @@ Create a new shortened URL.
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8080/snap \
+curl -X POST http://localhost:8081/snap \
   -H "Content-Type: application/json" \
   -d '{"link": "https://example.com/very/long/url"}'
 ```
@@ -103,7 +109,7 @@ Get the original URL and metadata for a short code.
 
 **Request:**
 ```bash
-curl http://localhost:8080/abc123
+curl http://localhost:8081/abc123
 ```
 
 **Response:**
@@ -121,7 +127,7 @@ Endpoint for deployment monitoring.
 
 **Request:**
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8081/health
 ```
 
 **Response:**
@@ -182,17 +188,19 @@ Structured logging for all operations:
 ### Render.com
 
 1. Connect your GitHub repository
-2. Create a new Web Service
+2. Create a new Web Service (or `render.yaml` blueprint)
 3. Set environment variables:
-   - `PORT=8080` (or keep default)
-   - `DATABASE_URL=postgresql://...`
+   - `PORT=8081` (or keep default)
+   - `DATABASE_URL=postgresql://...` (or attached DB)
+   - `API_KEY` (generated or set manually; needed for clients)
 4. Set build command: `go build -o snap-link`
 5. Set start command: `./snap-link`
 
 ### Docker (Local Development)
 
 ```bash
-docker-compose up -d
+docker compose up -d --build
+# App: http://localhost:8081/health (needs API_KEY in env)
 ```
 
 ### Manual VPS Deployment
@@ -203,16 +211,17 @@ go build -o snap-link
 
 # Set environment and run
 export DATABASE_URL="postgresql://..."
-export PORT=8080
+export PORT=8081
+export API_KEY="your-secret-key"
 ./snap-link
 ```
 
 ## Production Considerations
 
-- Use `LOG_LEVEL=warn` or `LOG_LEVEL=error` in production
+- Rotate `API_KEY` regularly; `/snap` requires `X-API-KEY`
 - Enable SSL/TLS via reverse proxy (nginx, Caddy)
 - Monitor database connection pool
-- Implement rate limiting for /snap endpoint
+- Rate limiting on /snap is fixed: 5/min per IP (see `internal/ratelimit`)
 - Consider caching for frequently accessed short codes
 - Regular database backups
 - Use connection pooling for high traffic
@@ -230,15 +239,15 @@ Create a simple test:
 
 ```bash
 # Test health check
-curl http://localhost:8080/health
+curl http://localhost:8081/health
 
 # Create short link
-curl -X POST http://localhost:8080/snap \
+curl -X POST http://localhost:8081/snap \
   -H "Content-Type: application/json" \
   -d '{"link": "https://github.com"}'
 
 # Retrieve original URL
-curl http://localhost:8080/abc123
+curl http://localhost:8081/abc123
 ```
 
 ## License
