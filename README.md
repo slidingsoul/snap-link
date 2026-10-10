@@ -21,8 +21,10 @@ A production-ready URL shortening service built with Go, Fiber, and PostgreSQL f
 ├── go.mod                       # Go module dependencies
 ├── .env.example                 # Environment variables template
 ├── middleware/
-│   └── rate_limit.go            # Fixed per-IP limiter (internal/ratelimit)
+│   ├── rate_limit.go            # Fixed per-IP limiter (internal/ratelimit)
+│   └── require_auth.go          # Neon JWT gate for POST /snap
 ├── internal/
+│   ├── auth/                    # Neon JWT verifier (issuer-only, JWKS derived)
 │   ├── shortcode/               # Single source: Charset, Generate, Validate
 │   └── ratelimit/               # Fixed limit: DefaultPerMinute = 5
 ├── models/
@@ -59,12 +61,15 @@ Edit `.env` with your database configuration:
 ```env
 PORT=8081
 DATABASE_URL=postgres://username:password@localhost:5432/link_shortener
+NEON_AUTH_BASE_URL=https://ep-xxxxx.aws.neon.tech/dbname/auth
 ```
 
 For **Neon DB**:
 ```env
 DATABASE_URL=postgresql://user:password@ep-xxxxx.neon.tech/dbname?sslmode=require
+NEON_AUTH_BASE_URL=https://ep-xxxxx.aws.neon.tech/dbname/auth
 ```
+Get the auth URL from Neon Console → Branch → Auth. JWKS + issuer are derived; no secret needed on the server.
 
 ### 3. Install Dependencies
 
@@ -85,12 +90,15 @@ The server will start on `http://localhost:8081`
 
 ### POST /snap - Create Short Link
 
-Create a new shortened URL.
+Requires Neon JWT: `Authorization: Bearer <token>` (see Neon Managed Better Auth).
+Reads (`GET /:code`, `GET /health`) stay public.
 
 **Request:**
 ```bash
+TOKEN=$(your-frontend getSession token)
 curl -X POST http://localhost:8081/snap \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"link": "https://example.com/very/long/url"}'
 ```
 
@@ -214,7 +222,7 @@ export PORT=8081
 
 ## Production Considerations
 
-- `POST /snap` is public; per-IP rate limiting (5/min) is the only guard
+- `POST /snap` requires Neon JWT (`Authorization: Bearer`); per-IP rate limiting (5/min) still applies
 - Enable SSL/TLS via reverse proxy (nginx, Caddy)
 - Monitor database connection pool
 - Rate limiting on /snap is fixed: 5/min per IP (see `internal/ratelimit`)

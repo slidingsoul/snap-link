@@ -7,6 +7,8 @@ services:
       # External DB (Neon): provide via env or .env file.
       # Example: postgresql://user:password@ep-xxxxx.neon.tech/dbname?sslmode=require
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      # Neon Managed Better Auth base URL (per-branch, Console → Branch → Auth).
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:?NEON_AUTH_BASE_URL is required}
     ports:
       - "${PORT:-8081}:${PORT:-8081}"
     healthcheck:

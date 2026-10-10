@@ -63,7 +63,8 @@ func doReq(t *testing.T, app *fiber.App, method, path string, body any) (int, ma
 
 func TestSnapIsPublic(t *testing.T) {
 	app := setupBehaviorApp(t)
-	// No API key needed — public, rate-limited endpoint.
+	// Controller has no auth check (enforced by RequireAuth middleware in
+	// main.go); posting directly succeeds.
 	code, body := doReq(t, app, "POST", "/snap", map[string]string{"link": "https://example.com/a"})
 	if code != 201 || body["link"] == "" {
 		t.Errorf("public create: got %d %v, want 201 with link", code, body)

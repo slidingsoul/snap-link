@@ -16,6 +16,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/requestid"
 	"github.com/joho/godotenv"
 	"github.com/slidingsoul/snap-link/controller"
+	"github.com/slidingsoul/snap-link/internal/auth"
 	"github.com/slidingsoul/snap-link/internal/ratelimit"
 	"github.com/slidingsoul/snap-link/middleware"
 	"github.com/slidingsoul/snap-link/models"
@@ -41,6 +42,19 @@ func main() {
 	if databaseURL == "" {
 		log.Fatal("DATABASE_URL environment variable is required")
 	}
+
+	// Neon Managed Better Auth base URL (per-branch, Console → Branch → Auth).
+	// e.g. https://ep-xxx.aws.neon.tech/neondb/auth
+	// JWKS + issuer are derived: <base>/.well-known/jwks.json, origin of <base>.
+	authBaseURL := os.Getenv("NEON_AUTH_BASE_URL")
+	if authBaseURL == "" {
+		log.Fatal("NEON_AUTH_BASE_URL environment variable is required")
+	}
+	authVerifier, err := auth.NewVerifier(authBaseURL)
+	if err != nil {
+		log.Fatalf("Failed to init Neon auth verifier: %v", err)
+	}
+	log.Println("Neon auth verifier initialized")
 
 	// Initialize database connection
 	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
@@ -103,8 +117,10 @@ func main() {
 
 	// Routes — order matters: /health must be registered
 	// before /:shortCode so the wildcard doesn't swallow it.
+	// POST /snap requires a Neon JWT (Authorization: Bearer);
+	// reads stay public.
 	app.Get("/health", linkController.HealthCheck)
-	app.Post("/snap", rateLimiter.Handler(), linkController.CreateShortLink)
+	app.Post("/snap", rateLimiter.Handler(), middleware.RequireAuth(authVerifier), linkController.CreateShortLink)
 
 	app.Get("/:shortCode", linkController.GetOriginalURL)
 

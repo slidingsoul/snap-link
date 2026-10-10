@@ -16,13 +16,16 @@ http://localhost:8081
 
 Creates a new shortened URL from a provided link.
 
-**Authentication:** None — public endpoint.
+**Authentication:** Requires Neon JWT — `Authorization: Bearer <token>`
+(verified against `<NEON_AUTH_BASE_URL>/.well-known/jwks.json`, issuer-only, EdDSA).
+Reads (`GET /:code`, `GET /health`) stay public.
 
 **Rate Limiting:** Fixed 5 requests per minute per IP (see `internal/ratelimit`).
 
 #### Request Headers
 ```
 Content-Type: application/json
+Authorization: Bearer <neon-jwt>
 ```
 
 #### Request Body
@@ -51,6 +54,13 @@ None
 }
 ```
 
+**401 Unauthorized** - Missing/invalid/expired Neon JWT
+```json
+{
+  "error": "Invalid or expired token"
+}
+```
+
 **429 Too Many Requests** - Rate limit exceeded
 ```json
 {
@@ -62,6 +72,7 @@ None
 ```bash
 curl -X POST http://localhost:8081/snap \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
   -d '{"link": "https://github.com/golang/go"}'
 
 # Response:
@@ -204,6 +215,7 @@ Content-Type: application/json
 | 200 OK | Request successful |
 | 201 Created | Resource created successfully |
 | 400 Bad Request | Invalid input or request format |
+| 401 Unauthorized | Missing/invalid/expired Neon JWT |
 | 404 Not Found | Resource not found |
 | 429 Too Many Requests | Rate limit exceeded (fixed 5/min) |
 | 500 Internal Server Error | Server error |
@@ -225,7 +237,12 @@ Requests exceeding the limit will receive:
 
 ## Authentication
 
-None — `POST /snap` is public and guarded only by per-IP rate limiting.
+Neon Managed Better Auth (Better Auth). Frontend signs in via SDK with
+`NEON_AUTH_BASE_URL`, sends `Authorization: Bearer <jwt>`.
+Go verifies EdDSA signature via `<base>/.well-known/jwks.json`,
+issuer = origin of base URL, plus expiry (no audience check).
+`sub` claim becomes the user ID (`c.Locals("userID")`).
+Required for `POST /snap`; reads stay public.
 
 ## Pagination
 
@@ -284,6 +301,7 @@ All responses are in JSON format with proper HTTP status codes.
 |----------|---------|----------|-------------|
 | PORT | 8081 | No | HTTP server port |
 | DATABASE_URL | - | Yes | PostgreSQL connection string |
+| NEON_AUTH_BASE_URL | - | Yes | Neon Managed Better Auth base URL (per-branch); JWKS + issuer derived |
 
 ## Best Practices
 

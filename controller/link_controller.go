@@ -22,7 +22,7 @@ func NewLinkController(svc *service.LinkService) *LinkController {
 	return &LinkController{service: svc}
 }
 
-// CreateShortLink handles POST /snap endpoint (public, rate-limited)
+// CreateShortLink handles POST /snap endpoint (requires Neon JWT via middleware)
 // Request body: { "link": "https://example.com/very/long/url" }
 // Response: { "link": "abc123" } (short code) or full URL path
 func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
