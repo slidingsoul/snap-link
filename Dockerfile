@@ -16,10 +16,10 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o snap-link .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -a -installsuffix cgo -ldflags="-s -w" -o snap-link .
 
 # Final stage
-FROM alpine:latest
+FROM alpine:3.21
 
 RUN apk --no-cache add ca-certificates wget && \
     addgroup -S appgroup && adduser -S appuser -G appgroup
@@ -34,7 +34,9 @@ USER appuser
 
 EXPOSE 8081
 
+# Liveness only: a DB blip must not restart the process. Readiness (/health)
+# is the platform's routing probe.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8081}/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-8081}/livez || exit 1
 
 CMD ["./snap-link"]

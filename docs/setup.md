@@ -24,6 +24,8 @@ Edit `.env`:
 PORT=8081
 DATABASE_URL=postgres://username:password@localhost:5432/link_shortener
 NEON_AUTH_BASE_URL=https://ep-xxxxx.aws.neon.tech/dbname/auth
+CORS_ALLOWED_ORIGINS=http://localhost:3000   # browser frontend origin(s), comma-separated
+PUBLIC_BASE_URL=http://localhost:8081        # used in POST /snap responses
 ```
 
 For **Neon DB**:
@@ -35,6 +37,11 @@ NEON_AUTH_BASE_URL=https://ep-xxxxx.aws.neon.tech/dbname/auth
 
 Get the auth URL from Neon Console → Branch → Auth (same branch as `DATABASE_URL`).
 JWKS + issuer are derived from it; no secret needed on the server.
+
+`CORS_ALLOWED_ORIGINS` is required for a browser client — `POST /snap` sends
+`Authorization`, so the browser preflights with `OPTIONS`. Empty means no
+cross-origin requests are allowed. For production use the **pooled** Neon URL
+(host contains `-pooler`) for the app and the **direct** URL for migrations.
 
 ## 3. Install Dependencies
 
@@ -53,6 +60,10 @@ go build -tags 'postgres' -o /tmp/migrate github.com/golang-migrate/migrate/v4/c
 /tmp/migrate -path migrations -database "$DATABASE_URL" up       # apply pending migrations
 /tmp/migrate -path migrations -database "$DATABASE_URL" version  # show current version
 ```
+
+Against Neon, point `-database` at the **direct** (non-`-pooler`) URL: the
+migration runner holds a session-level advisory lock, which the pooler's
+transaction mode can drop.
 
 New migration: create `migrations/<timestamp>_<name>.up.sql` + `.down.sql` (timestamp format `YYYYMMDDHHMMSS`, e.g. `20261010120000_add_owner.up.sql`).
 

@@ -14,12 +14,18 @@ import (
 
 // LinkController handles HTTP requests for link operations
 type LinkController struct {
-	service *service.LinkService
+	service       *service.LinkService
+	publicBaseURL string
 }
 
-// NewLinkController creates a new instance of LinkController
-func NewLinkController(svc *service.LinkService) *LinkController {
-	return &LinkController{service: svc}
+// NewLinkController creates a new instance of LinkController.
+// publicBaseURL is the externally reachable origin (e.g. https://snap.link);
+// leave it empty to derive the origin from the request.
+func NewLinkController(svc *service.LinkService, publicBaseURL string) *LinkController {
+	return &LinkController{
+		service:       svc,
+		publicBaseURL: strings.TrimSuffix(publicBaseURL, "/"),
+	}
 }
 
 // CreateShortLink handles POST /snap endpoint (requires Neon JWT via middleware)
@@ -44,7 +50,7 @@ func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
 	}
 
 	// Create short link via service
-	link, err := lc.service.CreateShortLink(req.Link)
+	link, err := lc.service.CreateShortLink(c.UserContext(), req.Link)
 	if err != nil {
 		log.Printf("Error creating short link: %v", err)
 		// Validation errors -> 400 with safe message; DB/infra -> 500 generic.
@@ -58,10 +64,26 @@ func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
 		})
 	}
 
-	// Return response with short code
+	// Return the full shareable URL plus the bare code.
 	return c.Status(http.StatusCreated).JSON(models.CreateLinkResponse{
-		Link: link.ShortCode,
+		Link:      lc.shortLinkURL(c, link.ShortCode),
+		ShortCode: link.ShortCode,
 	})
+}
+
+// shortLinkURL builds the public URL for a code. Falls back to the request's
+// origin when PUBLIC_BASE_URL is not configured (correct behind a TLS proxy
+// only if X-Forwarded-Proto is set).
+func (lc *LinkController) shortLinkURL(c *fiber.Ctx, code string) string {
+	base := lc.publicBaseURL
+	if base == "" {
+		scheme := c.Protocol()
+		if c.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		base = scheme + "://" + string(c.Request().Header.Host())
+	}
+	return base + "/" + code
 }
 
 // GetOriginalURL handles GET /:shortCode endpoint.
@@ -69,7 +91,7 @@ func (lc *LinkController) CreateShortLink(c *fiber.Ctx) error {
 func (lc *LinkController) GetOriginalURL(c *fiber.Ctx) error {
 	shortCode := c.Params("shortCode")
 
-	link, err := lc.service.GetLinkByShortCode(shortCode)
+	link, err := lc.service.GetLinkByShortCode(c.UserContext(), shortCode)
 	if err != nil {
 		log.Printf("Error retrieving link: %v", err)
 		if errors.Is(err, repository.ErrNotFound) {
@@ -90,10 +112,18 @@ func (lc *LinkController) GetOriginalURL(c *fiber.Ctx) error {
 	return c.Redirect(link.OriginalURL, fiber.StatusFound)
 }
 
+// Liveness handles GET /livez: process is up, no dependency checks.
+// Used by container runtimes so a DB blip doesn't restart the process.
+func (lc *LinkController) Liveness(c *fiber.Ctx) error {
+	return c.Status(http.StatusOK).JSON(fiber.Map{
+		"status": "alive",
+	})
+}
+
 // HealthCheck handles GET /health endpoint for deployment monitoring.
 // Pings the DB so orchestrators don't send traffic to a dead instance.
 func (lc *LinkController) HealthCheck(c *fiber.Ctx) error {
-	if err := lc.service.Ping(); err != nil {
+	if err := lc.service.Ping(c.UserContext()); err != nil {
 		log.Printf("Health check DB ping failed: %v", err)
 		return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
 			"status": "unhealthy",

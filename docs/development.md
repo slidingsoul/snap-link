@@ -22,6 +22,11 @@ export NEON_AUTH_BASE_URL="https://ep-xxx.../neondb/auth"
 
 Flow: health → register → login → JWT → create (`201`) → redirect (`302` + `Location`) → negatives (`401`/`400`/`404`) → rate-limit probes (`EXPECTED_LIMIT` aware — restart the server first for a clean fixed window).
 
+The limiter runs after auth and is keyed on the JWT `sub`, so the script assumes
+two quota-consuming requests before the probes (create + bad-URL `400`); the
+no-token `401` does not count. Fewer than `EXPECTED_LIMIT - 2` probes means the
+window was already used — restart the server.
+
 ## Adding Migrations
 
 ```bash

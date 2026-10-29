@@ -22,7 +22,10 @@ type CreateLinkRequest struct {
 	Link string `json:"link" validate:"required,url"`
 }
 
-// CreateLinkResponse represents the response body for creating a short link
+// CreateLinkResponse represents the response body for creating a short link.
+// Link is the full shareable URL (PUBLIC_BASE_URL + code); ShortCode is the
+// bare code for clients that build their own links.
 type CreateLinkResponse struct {
-	Link string `json:"link"`
+	Link      string `json:"link"`
+	ShortCode string `json:"short_code"`
 }

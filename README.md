@@ -7,13 +7,13 @@ A URL shortening service built with Go, Fiber, and PostgreSQL. `POST /snap` requ
 - Collision-resistant 6-character short codes (`crypto/rand`, retry on conflict)
 - Strict URL validation (http/https only)
 - Neon Managed Better Auth (EdDSA JWT, issuer-only verification)
-- Fixed per-IP rate limiting (5/min)
+- Fixed per-user rate limiting (5/min)
 - Versioned Postgres migrations (manual, app never migrates itself)
 
 ## Quickstart
 
 ```bash
-cp .env.example .env   # set DATABASE_URL + NEON_AUTH_BASE_URL (same Neon branch)
+cp .env.example .env   # DATABASE_URL + NEON_AUTH_BASE_URL, CORS_ALLOWED_ORIGINS, PUBLIC_BASE_URL
 go mod download
 go build -tags 'postgres' -o /tmp/migrate github.com/golang-migrate/migrate/v4/cmd/migrate
 /tmp/migrate -path migrations -database "$DATABASE_URL" up

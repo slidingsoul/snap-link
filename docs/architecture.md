@@ -9,7 +9,8 @@
 ├── .env.example                 # Environment variables template
 ├── migrations/                  # Versioned schema (golang-migrate, manual)
 ├── middleware/
-│   ├── rate_limit.go            # Fixed per-IP limiter (internal/ratelimit)
+│   ├── rate_limit.go            # Fixed per-user limiter (internal/ratelimit)
+│   ├── timeout.go               # 5s request context deadline
 │   └── require_auth.go          # Neon JWT gate for POST /snap
 ├── internal/
 │   ├── auth/                    # Neon JWT verifier (issuer-only, JWKS derived)
@@ -56,10 +57,14 @@ A legacy `lookups` table may exist in older databases; it is ignored. Neon auth 
 
 ## Authentication & Rate Limiting
 
-- `POST /snap` chain: fixed-window per-IP limiter → `RequireAuth` (Neon JWT) → handler. The limiter runs **first**, so even rejected `401`/`400` requests consume quota (intentional DDoS posture).
-- JWT verification: EdDSA signature via `<NEON_AUTH_BASE_URL>/.well-known/jwks.json`, issuer = origin of base URL, plus expiry. No audience check. `sub` claim becomes `c.Locals("userID")`.
-- Reads (`GET /:code`, `GET /health`) are public.
-- Server hardening: `helmet`, `requestid`, `BodyLimit 16KB`, read/write/idle timeouts, no `ServerHeader` leak, `ProxyHeader: X-Forwarded-For` so per-IP limiting sees real clients behind Render.
+- `POST /snap` chain: `RequireAuth` (Neon JWT) → fixed-window limiter → handler. The limiter runs **after** auth and keys on the JWT `sub` (IP fallback), so rejected `401`s don't consume quota and rotating `X-Forwarded-For` doesn't reset it. `429` carries `Retry-After`.
+- Limiter state is in-process: the effective limit is `5 × instances`, and a restart clears every window. Move it to Redis/Postgres before scaling out.
+- JWT verification: EdDSA signature via `<NEON_AUTH_BASE_URL>/.well-known/jwks.json`, issuer = origin of base URL, plus expiry. No audience check. `sub` claim becomes `c.Locals("userID")` (not persisted on `links` yet).
+- Public reads: `GET /:code`, `GET /health` (DB readiness), `GET /livez` (process liveness).
+- Browser access: CORS is configured from `CORS_ALLOWED_ORIGINS`; empty means no cross-origin. `POST /snap` needs an `OPTIONS` preflight because of the `Authorization` header.
+- Request lifetime: `middleware.Timeout` attaches a 5s deadline to the context; every repository call uses `db.WithContext(ctx)`, so a slow query is cancelled instead of pinning a connection.
+- Server hardening: `helmet`, `requestid` (echoed as `X-Request-ID`), `BodyLimit 16KB`, read/write/idle timeouts, no `ServerHeader` leak, `ProxyHeader: X-Forwarded-For` so IPs are real behind Render.
+- `POST /snap` returns the full URL built from `PUBLIC_BASE_URL` (fallback: request Host/Proto) plus `short_code`.
 
 ## Logging
 
@@ -70,4 +75,5 @@ Request/response logging with status, latency, and request ID (`main.go` logger 
 - Short code generation: < 1ms
 - Database insert: ~5–10ms (without network latency)
 - Average response time: 10–20ms
-- Connection pool: 25 max open / 5 idle / 5-min lifetime
+- Connection pool: 25 max open / 5 idle / 5-min lifetime, **per instance**
+- Initial connection: retried up to 5× with linear backoff (Neon cold start)

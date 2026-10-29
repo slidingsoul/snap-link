@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -9,13 +10,13 @@ import (
 	"github.com/slidingsoul/snap-link/internal/ratelimit"
 )
 
-// visitor tracks a single IP's fixed-window count.
+// visitor tracks a single key's fixed-window count.
 type visitor struct {
 	count       int
 	windowStart time.Time
 }
 
-// Limiter is a fixed-window per-IP limiter with a static max.
+// Limiter is a fixed-window limiter with a static max.
 // The limit comes from internal/ratelimit (no DB dependency).
 type Limiter struct {
 	max        int
@@ -37,31 +38,48 @@ func NewLimiter(max int) *Limiter {
 	}
 }
 
-// Handler is a fixed-window per-IP limiter.
+// rateLimitKey prefers the authenticated user (set by RequireAuth) over the
+// client IP. Keying on the JWT subject means a caller cannot multiply their
+// quota by rotating X-Forwarded-For. IP is a fallback only for requests that
+// reach the limiter without a user (e.g. if middleware order changes).
+func rateLimitKey(c *fiber.Ctx) string {
+	if userID, ok := c.Locals("userID").(string); ok && userID != "" {
+		return "user:" + userID
+	}
+	return "ip:" + c.IP()
+}
+
+// Handler is a fixed-window limiter keyed by user (preferred) or IP.
+// Register it after RequireAuth on authenticated routes.
 func (d *Limiter) Handler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		max := d.max
-		ip := c.IP()
+		key := rateLimitKey(c)
 		now := time.Now()
 
 		d.visitorsMu.Lock()
-		v, ok := d.visitors[ip]
+		v, ok := d.visitors[key]
 		if !ok || now.Sub(v.windowStart) >= d.window {
-			d.visitors[ip] = &visitor{count: 1, windowStart: now}
+			d.visitors[key] = &visitor{count: 1, windowStart: now}
+			size := len(d.visitors)
 			d.visitorsMu.Unlock()
 			// Opportunistic cleanup to bound memory.
-			if len(d.visitors)%1000 == 0 {
+			if size%1000 == 0 {
 				go d.cleanup()
 			}
 			return c.Next()
 		}
 		v.count++
 		count := v.count
+		retryAfter := int(math.Ceil(v.windowStart.Add(d.window).Sub(now).Seconds()))
 		d.visitorsMu.Unlock()
 
-		if count > max {
+		if count > d.max {
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			c.Set(fiber.HeaderRetryAfter, fmt.Sprintf("%d", retryAfter))
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error": fmt.Sprintf("Rate limit exceeded: %d requests per minute allowed", max),
+				"error": fmt.Sprintf("Rate limit exceeded: %d requests per minute allowed", d.max),
 			})
 		}
 		return c.Next()
@@ -69,12 +87,12 @@ func (d *Limiter) Handler() fiber.Handler {
 }
 
 func (d *Limiter) cleanup() {
-	cutoff := time.Now().Add(-2 * time.Minute)
+	cutoff := time.Now().Add(-2 * d.window)
 	d.visitorsMu.Lock()
 	defer d.visitorsMu.Unlock()
-	for ip, v := range d.visitors {
+	for key, v := range d.visitors {
 		if v.windowStart.Before(cutoff) {
-			delete(d.visitors, ip)
+			delete(d.visitors, key)
 		}
 	}
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -30,7 +31,7 @@ func NewLinkService(repo *repository.LinkRepository) *LinkService {
 }
 
 // CreateShortLink creates a new short link with validation
-func (s *LinkService) CreateShortLink(originalURL string) (*models.Link, error) {
+func (s *LinkService) CreateShortLink(ctx context.Context, originalURL string) (*models.Link, error) {
 	// Validate the input URL
 	cleanedURL, err := validateURL(originalURL)
 	if err != nil {
@@ -39,7 +40,7 @@ func (s *LinkService) CreateShortLink(originalURL string) (*models.Link, error) 
 	}
 
 	// Create the link via repository
-	link, err := s.repo.Create(cleanedURL)
+	link, err := s.repo.Create(ctx, cleanedURL)
 	if err != nil {
 		log.Printf("Error creating short link: %v", err)
 		return nil, fmt.Errorf("failed to create short link: %w", err)
@@ -49,17 +50,17 @@ func (s *LinkService) CreateShortLink(originalURL string) (*models.Link, error) 
 }
 
 // Ping verifies the database connection is alive (for /health).
-func (s *LinkService) Ping() error {
-	return s.repo.Ping()
+func (s *LinkService) Ping(ctx context.Context) error {
+	return s.repo.Ping(ctx)
 }
 
 // GetLinkByShortCode retrieves the original URL for a short code
-func (s *LinkService) GetLinkByShortCode(shortCode string) (*models.Link, error) {
+func (s *LinkService) GetLinkByShortCode(ctx context.Context, shortCode string) (*models.Link, error) {
 	if err := ValidateShortCode(shortCode); err != nil {
 		return nil, err
 	}
 
-	link, err := s.repo.GetByShortCode(shortCode)
+	link, err := s.repo.GetByShortCode(ctx, shortCode)
 	if err != nil {
 		log.Printf("Error retrieving link by short code: %v", err)
 		return nil, err

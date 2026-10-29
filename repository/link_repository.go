@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -25,8 +26,9 @@ func NewLinkRepository(db *gorm.DB) *LinkRepository {
 	return &LinkRepository{db: db}
 }
 
-// Create saves a new link to the database with a generated short code
-func (r *LinkRepository) Create(originalURL string) (*models.Link, error) {
+// Create saves a new link to the database with a generated short code.
+// The caller's context bounds the query (and is cancelled on request timeout).
+func (r *LinkRepository) Create(ctx context.Context, originalURL string) (*models.Link, error) {
 	shortCode, err := shortcode.Generate()
 	if err != nil {
 		log.Printf("Error generating short code: %v", err)
@@ -41,7 +43,7 @@ func (r *LinkRepository) Create(originalURL string) (*models.Link, error) {
 			ShortCode:   shortCode,
 		}
 
-		result := r.db.Create(link)
+		result := r.db.WithContext(ctx).Create(link)
 		if result.Error == nil {
 			return link, nil
 		}
@@ -69,18 +71,18 @@ func (r *LinkRepository) Create(originalURL string) (*models.Link, error) {
 }
 
 // Ping verifies the database connection is alive (for /health).
-func (r *LinkRepository) Ping() error {
+func (r *LinkRepository) Ping(ctx context.Context) error {
 	sqlDB, err := r.db.DB()
 	if err != nil {
 		return err
 	}
-	return sqlDB.Ping()
+	return sqlDB.PingContext(ctx)
 }
 
 // GetByShortCode retrieves a link by its short code
-func (r *LinkRepository) GetByShortCode(shortCode string) (*models.Link, error) {
+func (r *LinkRepository) GetByShortCode(ctx context.Context, shortCode string) (*models.Link, error) {
 	var link models.Link
-	result := r.db.Where("short_code = ?", shortCode).First(&link)
+	result := r.db.WithContext(ctx).Where("short_code = ?", shortCode).First(&link)
 	if result.Error != nil {
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound

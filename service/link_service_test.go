@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -82,7 +83,7 @@ func TestCreateShortLink(t *testing.T) {
 	svc := NewLinkService(repo)
 
 	t.Run("Create short link with scheme added", func(t *testing.T) {
-		link, err := svc.CreateShortLink("example.com")
+		link, err := svc.CreateShortLink(context.Background(), "example.com")
 		if err != nil {
 			t.Fatalf("CreateShortLink() error = %v", err)
 		}
@@ -95,7 +96,7 @@ func TestCreateShortLink(t *testing.T) {
 	})
 
 	t.Run("Reject non-http scheme", func(t *testing.T) {
-		if _, err := svc.CreateShortLink("ftp://example.com"); err == nil {
+		if _, err := svc.CreateShortLink(context.Background(), "ftp://example.com"); err == nil {
 			t.Errorf("Expected error for ftp scheme")
 		}
 	})

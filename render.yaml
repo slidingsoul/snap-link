@@ -2,17 +2,26 @@ services:
   - type: web
     name: snap-link
     runtime: go
+    # Schema is applied manually before deploying: see docs/deployment.md.
     buildCommand: go build -o snap-link .
     startCommand: ./snap-link
+    # Readiness: pings Postgres (503 when the DB is unreachable).
     healthCheckPath: /health
     envVars:
-      - key: PORT
-        value: 8081
-      # External DB (Neon): set DATABASE_URL manually in the Render dashboard.
+      # Do NOT set PORT: Render injects it and routes to that value.
+      # External DB (Neon): set manually in the Render dashboard.
       # Format: postgresql://user:password@ep-xxxxx.neon.tech/dbname?sslmode=require
       - key: DATABASE_URL
         sync: false
       # Neon Managed Better Auth (per-branch, Console → Branch → Auth).
       # Same branch as DATABASE_URL. JWKS + issuer derived, no secret.
       - key: NEON_AUTH_BASE_URL
+        sync: false
+      # Comma-separated browser origins allowed to call POST /snap.
+      # e.g. https://app.example.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      # Public origin used to build shareable links.
+      # e.g. https://snap-link.onrender.com
+      - key: PUBLIC_BASE_URL
         sync: false

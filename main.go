@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/helmet"
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"
@@ -23,6 +25,16 @@ import (
 	"github.com/slidingsoul/snap-link/service"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+)
+
+const (
+	// requestTimeout bounds the whole handler (including DB queries).
+	requestTimeout = 5 * time.Second
+
+	// Neon scales to zero, so the first connection after idle can take a
+	// few seconds. Retry instead of failing the deploy/restart on a cold DB.
+	dbConnectAttempts = 5
+	dbConnectBaseWait = time.Second
 )
 
 func main() {
@@ -55,10 +67,17 @@ func main() {
 	}
 	log.Println("Neon auth verifier initialized")
 
-	// Initialize database connection
-	db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+	// Public origin used to build shareable links. Set it in production
+	// (e.g. https://snap.example.com); otherwise it is derived per request.
+	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
+	if publicBaseURL == "" {
+		log.Println("Warning: PUBLIC_BASE_URL not set — short links are built from the request Host/Proto")
+	}
+
+	// Initialize database connection (with retry for Neon cold starts)
+	db, err := connectDB(databaseURL)
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Fatalf("Failed to connect to database after %d attempts: %v", dbConnectAttempts, err)
 	}
 
 	// Bound the pool so one deploy can't exhaust Postgres.
@@ -80,9 +99,12 @@ func main() {
 	// clear message instead of obscure query errors at request time.
 	// NOTE: a legacy `lookups` table may exist in the DB; it is no longer used.
 	var tableExists bool
-	if err := db.Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'links')").Scan(&tableExists).Error; err != nil {
+	schemaCtx, schemaCancel := context.WithTimeout(context.Background(), requestTimeout)
+	if err := db.WithContext(schemaCtx).Raw("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'links')").Scan(&tableExists).Error; err != nil {
+		schemaCancel()
 		log.Fatalf("Failed to check schema: %v", err)
 	}
+	schemaCancel()
 	if !tableExists {
 		log.Fatal("links table not found: apply migrations/ to DATABASE_URL first (see README)")
 	}
@@ -90,7 +112,7 @@ func main() {
 	// Initialize repository, service, and controller layers
 	linkRepo := repository.NewLinkRepository(db)
 	linkService := service.NewLinkService(linkRepo)
-	linkController := controller.NewLinkController(linkService)
+	linkController := controller.NewLinkController(linkService, publicBaseURL)
 
 	// Initialize Fiber app with production-safe defaults.
 	app := fiber.New(fiber.Config{
@@ -115,15 +137,36 @@ func main() {
 		Format: "[${time}] ${status} - ${method} ${path} (${latency}) ${locals:requestid}\n",
 	}))
 
-	// Fixed per-IP rate limiter for /snap (see internal/ratelimit).
+	// CORS: the browser frontend is a different origin, and Authorization is
+	// a non-simple header, so /snap needs an OPTIONS preflight. Empty config
+	// means "no cross-origin allowed" (Fiber would otherwise default to "*").
+	corsConfig := cors.Config{
+		AllowMethods: "GET,POST,OPTIONS",
+		AllowHeaders: "Authorization,Content-Type",
+		MaxAge:       600,
+	}
+	if allowed := os.Getenv("CORS_ALLOWED_ORIGINS"); allowed != "" {
+		corsConfig.AllowOrigins = allowed
+	} else {
+		log.Println("Warning: CORS_ALLOWED_ORIGINS not set — cross-origin browser requests will be rejected")
+		corsConfig.AllowOriginsFunc = func(string) bool { return false }
+	}
+	app.Use(cors.New(corsConfig))
+
+	// Give handlers (and DB queries) a deadline; see middleware/timeout.go.
+	app.Use(middleware.Timeout(requestTimeout))
+
+	// Fixed per-user rate limiter for /snap (see internal/ratelimit).
 	rateLimiter := middleware.NewLimiter(ratelimit.DefaultPerMinute)
 
-	// Routes — order matters: /health must be registered
-	// before /:shortCode so the wildcard doesn't swallow it.
-	// POST /snap requires a Neon JWT (Authorization: Bearer);
-	// reads stay public.
+	// Routes — order matters: /health and /livez must be registered
+	// before /:shortCode so the wildcard doesn't swallow them.
+	// POST /snap: auth first, then rate limit, so the quota is keyed on the
+	// JWT subject instead of a spoofable header.
+	// Reads stay public.
+	app.Get("/livez", linkController.Liveness)
 	app.Get("/health", linkController.HealthCheck)
-	app.Post("/snap", rateLimiter.Handler(), middleware.RequireAuth(authVerifier), linkController.CreateShortLink)
+	app.Post("/snap", middleware.RequireAuth(authVerifier), rateLimiter.Handler(), linkController.CreateShortLink)
 
 	app.Get("/:shortCode", linkController.GetOriginalURL)
 
@@ -141,11 +184,38 @@ func main() {
 
 	<-ctx.Done()
 	log.Println("Shutdown signal received, draining connections...")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = shutdownCtx // fiber Shutdown has its own timeout below
 	if err := app.ShutdownWithTimeout(10 * time.Second); err != nil {
 		log.Printf("Graceful shutdown failed: %v", err)
 	}
 	log.Println("Server stopped")
+}
+
+// connectDB opens the pool and pings it, retrying with linear backoff.
+// Neon scales to zero; without this a cold database turns a routine deploy
+// into a failed boot.
+func connectDB(databaseURL string) (*gorm.DB, error) {
+	var lastErr error
+	for attempt := 1; attempt <= dbConnectAttempts; attempt++ {
+		db, err := gorm.Open(postgres.Open(databaseURL), &gorm.Config{})
+		if err == nil {
+			var sqlDB *sql.DB
+			if sqlDB, err = db.DB(); err == nil {
+				pingCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				err = sqlDB.PingContext(pingCtx)
+				cancel()
+			}
+			if err == nil {
+				return db, nil
+			}
+		}
+
+		lastErr = err
+		if attempt == dbConnectAttempts {
+			break
+		}
+		wait := time.Duration(attempt) * dbConnectBaseWait
+		log.Printf("Database connect attempt %d/%d failed (%v); retrying in %s", attempt, dbConnectAttempts, err, wait)
+		time.Sleep(wait)
+	}
+	return nil, lastErr
 }

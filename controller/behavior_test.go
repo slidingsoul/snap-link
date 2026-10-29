@@ -31,8 +31,9 @@ func setupBehaviorApp(t *testing.T) *fiber.App {
 	t.Helper()
 	db := setupBehaviorDB(t)
 	linkSvc := service.NewLinkService(repository.NewLinkRepository(db))
-	linkCtl := NewLinkController(linkSvc)
+	linkCtl := NewLinkController(linkSvc, "https://snap.test")
 	app := fiber.New()
+	app.Get("/livez", linkCtl.Liveness)
 	app.Get("/health", linkCtl.HealthCheck)
 	app.Post("/snap", linkCtl.CreateShortLink)
 	app.Get("/:shortCode", linkCtl.GetOriginalURL)
@@ -95,7 +96,10 @@ func TestSnapValidationAndLeakage(t *testing.T) {
 func TestGetByShortCodeStatuses(t *testing.T) {
 	app := setupBehaviorApp(t)
 	_, created := doReq(t, app, "POST", "/snap", map[string]string{"link": "https://example.com/b"})
-	code := created["link"].(string)
+	code := created["short_code"].(string)
+	if want := "https://snap.test/" + code; created["link"] != want {
+		t.Errorf("link = %v, want %q", created["link"], want)
+	}
 	// Existing code -> 302 redirect with Location header (no redirect follow).
 	req := httptest.NewRequest("GET", "/"+code, nil)
 	resp, err := app.Test(req, -1)
@@ -121,5 +125,8 @@ func TestHealth(t *testing.T) {
 	app := setupBehaviorApp(t)
 	if code, body := doReq(t, app, "GET", "/health", nil); code != 200 || body["status"] != "healthy" {
 		t.Errorf("health: got %d %v, want 200 healthy", code, body)
+	}
+	if code, body := doReq(t, app, "GET", "/livez", nil); code != 200 || body["status"] != "alive" {
+		t.Errorf("livez: got %d %v, want 200 alive", code, body)
 	}
 }

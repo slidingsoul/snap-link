@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"testing"
 
 	"github.com/slidingsoul/snap-link/models"
@@ -37,7 +38,7 @@ func TestRepositoryCreate(t *testing.T) {
 	repo := NewLinkRepository(db)
 
 	originalURL := "https://github.com/golang/go"
-	link, err := repo.Create(originalURL)
+	link, err := repo.Create(context.Background(), originalURL)
 
 	if err != nil {
 		t.Errorf("Create() error = %v, want nil", err)
@@ -66,12 +67,12 @@ func TestRepositoryGetByShortCode(t *testing.T) {
 	repo := NewLinkRepository(db)
 
 	originalURL := "https://example.com"
-	created, err := repo.Create(originalURL)
+	created, err := repo.Create(context.Background(), originalURL)
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	retrieved, err := repo.GetByShortCode(created.ShortCode)
+	retrieved, err := repo.GetByShortCode(context.Background(), created.ShortCode)
 	if err != nil {
 		t.Errorf("GetByShortCode() error = %v, want nil", err)
 	}
@@ -94,7 +95,7 @@ func TestRepositoryGetByShortCodeNotFound(t *testing.T) {
 	db := SetupTestDB(t)
 	repo := NewLinkRepository(db)
 
-	_, err := repo.GetByShortCode("nonexistent")
+	_, err := repo.GetByShortCode(context.Background(), "nonexistent")
 	if err == nil {
 		t.Errorf("GetByShortCode() error = nil, want error for nonexistent code")
 	}
@@ -112,7 +113,7 @@ func TestRepositoryMultipleCreates(t *testing.T) {
 
 	links := make([]*models.Link, len(urls))
 	for i, url := range urls {
-		link, err := repo.Create(url)
+		link, err := repo.Create(context.Background(), url)
 		if err != nil {
 			t.Errorf("Create() error for %s = %v", url, err)
 			return
@@ -129,7 +130,7 @@ func TestRepositoryMultipleCreates(t *testing.T) {
 		shortCodes[link.ShortCode] = true
 
 		// Verify we can retrieve each link
-		retrieved, err := repo.GetByShortCode(link.ShortCode)
+		retrieved, err := repo.GetByShortCode(context.Background(), link.ShortCode)
 		if err != nil {
 			t.Errorf("GetByShortCode() error for %s = %v", link.ShortCode, err)
 			return

@@ -18,9 +18,9 @@ Creates a new shortened URL from a provided link.
 
 **Authentication:** Requires Neon JWT — `Authorization: Bearer <token>`
 (verified against `<NEON_AUTH_BASE_URL>/.well-known/jwks.json`, issuer-only, EdDSA).
-Reads (`GET /:code`, `GET /health`) stay public.
+Reads (`GET /:code`, `GET /health`, `GET /livez`) stay public.
 
-**Rate Limiting:** Fixed 5 requests per minute per IP (see `internal/ratelimit`).
+**Rate Limiting:** Fixed 5 requests per minute per user (JWT `sub`; see `internal/ratelimit`).
 
 #### Request Headers
 ```
@@ -41,9 +41,13 @@ None
 #### Response (201 Created)
 ```json
 {
-  "link": "abc123"
+  "link": "https://snap.example.com/abc123",
+  "short_code": "abc123"
 }
 ```
+
+`link` is the full shareable URL built from `PUBLIC_BASE_URL` (or the request
+Host/Proto when unset). `short_code` is the bare code.
 
 #### Error Responses
 
@@ -62,11 +66,17 @@ None
 ```
 
 **429 Too Many Requests** - Rate limit exceeded
+```
+Retry-After: 42
+```
 ```json
 {
   "error": "Rate limit exceeded: 5 requests per minute allowed"
 }
 ```
+
+The limit is keyed on the JWT `sub` (5/min per user), so 401s do not consume
+quota and rotating IPs does not reset it.
 
 #### Example
 ```bash
@@ -76,7 +86,7 @@ curl -X POST http://localhost:8081/snap \
   -d '{"link": "https://github.com/golang/go"}'
 
 # Response:
-# {"link":"xYz9Qk"}
+# {"link":"http://localhost:8081/xYz9Qk","short_code":"xYz9Qk"}
 ```
 
 ---
@@ -120,12 +130,13 @@ curl -i http://localhost:8081/abc123
 
 ---
 
-### 3. Health Check
+### 3. Health Checks
 
-**GET** `/health`
+**GET** `/livez` — liveness. Always `200 {"status":"alive"}`; no dependencies.
+Used by container runtimes so a database blip doesn't restart the process.
 
-Checks the health status of the API. Pings Postgres: returns `200 healthy`
-or `503 unhealthy` when the DB is unreachable.
+**GET** `/health` — readiness. Pings Postgres: `200 healthy` or `503 unhealthy`
+when the DB is unreachable. Used by the platform to route traffic.
 
 #### Response (200 OK)
 ```json
@@ -137,9 +148,10 @@ or `503 unhealthy` when the DB is unreachable.
 #### Example
 ```bash
 curl http://localhost:8081/health
-
-# Response:
 # {"status":"healthy"}
+
+curl http://localhost:8081/livez
+# {"status":"alive"}
 ```
 
 ---
@@ -161,7 +173,7 @@ HTTP/1.1 201 Created
 Content-Type: application/json
 Content-Length: 19
 
-{"link":"Kp8mQw"}
+{"link":"https://snap.example.com/Kp8mQw","short_code":"Kp8mQw"}
 ```
 
 ### Example 2: Following a Short Link
@@ -197,13 +209,13 @@ Content-Type: application/json
 
 | Status Code | Description |
 |------------|-------------|
-| 200 OK | Request successful (`GET /health`) |
+| 200 OK | Request successful (`GET /health`, `GET /livez`) |
 | 201 Created | Resource created successfully |
 | 302 Found | Redirect to original URL (`GET /:shortCode`) |
 | 400 Bad Request | Invalid input or request format |
 | 401 Unauthorized | Missing/invalid/expired Neon JWT |
 | 404 Not Found | Resource not found |
-| 429 Too Many Requests | Rate limit exceeded (fixed 5/min) |
+| 429 Too Many Requests | Rate limit exceeded (fixed 5/min per user) |
 | 500 Internal Server Error | Server error |
 | 503 Service Unavailable | /health DB unreachable |
 
@@ -211,15 +223,24 @@ Content-Type: application/json
 
 Rate limiting is implemented on the POST `/snap` endpoint:
 - **Limit:** fixed 5 requests per minute (see `internal/ratelimit`)
-- **Scope:** Per IP address, fixed 1-minute window
-- **Response:** 429 Too Many Requests with error message
+- **Order:** auth → limiter → handler, so 401s don't consume quota
+- **Scope:** Per JWT `sub` (IP fallback), fixed 1-minute window
+- **Response:** 429 Too Many Requests + `Retry-After` header
 
 Requests exceeding the limit will receive:
+```
+HTTP/1.1 429 Too Many Requests
+Retry-After: 42
+```
 ```json
 {
   "error": "Rate limit exceeded: 5 requests per minute allowed"
 }
 ```
+
+Counters are in-memory: with multiple instances the effective limit is
+`5 × instances`, and a restart resets every window. Move the limiter to
+Redis/Postgres before running more than one replica.
 
 ## Authentication
 
@@ -229,6 +250,10 @@ Go verifies EdDSA signature via `<base>/.well-known/jwks.json`,
 issuer = origin of base URL, plus expiry (no audience check).
 `sub` claim becomes the user ID (`c.Locals("userID")`).
 Required for `POST /snap`; reads stay public.
+
+Browser clients must be listed in `CORS_ALLOWED_ORIGINS`: `POST /snap` sends
+`Authorization`, so the browser issues an `OPTIONS` preflight first. When the
+variable is unset, all cross-origin requests are rejected.
 
 ## Pagination
 
@@ -268,7 +293,8 @@ responds with a `302` redirect (`Location` header) instead of a body.
 ### Success Response Structure
 ```json
 {
-  "link": "value"
+  "link": "https://snap.example.com/abc123",
+  "short_code": "abc123"
 }
 ```
 
@@ -286,6 +312,8 @@ responds with a `302` redirect (`Location` header) instead of a body.
 | PORT | 8081 | No | HTTP server port |
 | DATABASE_URL | - | Yes | PostgreSQL connection string |
 | NEON_AUTH_BASE_URL | - | Yes | Neon Managed Better Auth base URL (per-branch); JWKS + issuer derived |
+| CORS_ALLOWED_ORIGINS | - | No | Comma-separated browser origins allowed to call `POST /snap` (empty = none) |
+| PUBLIC_BASE_URL | - | No | Public origin used to build `link` in responses (empty = request Host/Proto) |
 
 ## Best Practices
 

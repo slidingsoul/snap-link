@@ -103,9 +103,13 @@ code=$(curl -s -o /tmp/snap-create.json -w "%{http_code}" \
   -d "$(jq -n --arg l "$TARGET_URL" '{link:$l}')" \
   "$API_BASE/snap")
 assert_status "$code" "201" "POST /snap"
-SHORT_CODE="$(jq -r '.link // empty' /tmp/snap-create.json)"
-[ -n "$SHORT_CODE" ] || { echo "--- create body ---" >&2; cat /tmp/snap-create.json >&2; fail "POST /snap body" "empty" '{"link":"..."}'; }
-pass "POST /snap → code $SHORT_CODE"
+SHORT_CODE="$(jq -r '.short_code // empty' /tmp/snap-create.json)"
+[ -n "$SHORT_CODE" ] || { echo "--- create body ---" >&2; cat /tmp/snap-create.json >&2; fail "POST /snap body" "empty" '{"link":"...","short_code":"..."}'; }
+FULL_LINK="$(jq -r '.link // empty' /tmp/snap-create.json)"
+case "$FULL_LINK" in
+  */"$SHORT_CODE") pass "POST /snap → $FULL_LINK" ;;
+  *) fail "POST /snap link" "$FULL_LINK" "*$SHORT_CODE" ;;
+esac
 
 # 6. Follow short link (public, expect 302 + Location, no -L flag)
 headers=$(curl -s -D - -o /dev/null "$API_BASE/$SHORT_CODE")
@@ -137,11 +141,12 @@ assert_status "$code" "404" "GET /abcdef"
 code=$(curl -s -o /dev/null -w "%{http_code}" "$API_BASE/ab")
 assert_status "$code" "400" "GET /ab"
 
-# 11. Rate limit: adaptive to EXPECTED_LIMIT (fixed 5/min per IP by default)
-# 3 POST /snap already consumed above (create + no-token 401 + bad-URL 400 —
-# the limiter runs before auth, so even rejected requests count).
-# On a fresh window: first (EXPECTED_LIMIT - 3) probes -> 201, then 429s.
-CONSUMED=3
+# 11. Rate limit: adaptive to EXPECTED_LIMIT (fixed 5/min per user by default).
+# 2 POST /snap already consumed above for this JWT: the successful create and
+# the bad-URL 400 (auth passes, so the limiter counts it). The no-token 401
+# does NOT count — auth runs before the limiter.
+# On a fresh window: first (EXPECTED_LIMIT - 2) probes -> 201, then 429s.
+CONSUMED=2
 ALLOW=$((EXPECTED_LIMIT - CONSUMED))
 if [ "$ALLOW" -lt 1 ]; then
   fail "rate-limit setup" "$EXPECTED_LIMIT" "EXPECTED_LIMIT > $CONSUMED (restart server for a clean window)"
