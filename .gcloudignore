@@ -1,0 +1,17 @@
+# Files uploaded to the App Engine build. Overrides .gitignore, so .env is
+# listed explicitly. app.yaml itself is always sent as the deploy config.
+.git
+.gitignore
+.env
+.env.*
+bin/
+docs/
+migrations/
+snap-link
+snap-link-test.sh
+deploy.sh
+app.yaml.example
+Dockerfile
+docker-compose.yml
+render.yaml
+*.md

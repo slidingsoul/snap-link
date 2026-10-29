@@ -1,0 +1,25 @@
+# Template rendered by deploy.sh into app.yaml (gitignored — it holds secrets).
+# App Engine ignores the Dockerfile: it builds the Go module at the repo root
+# and runs the result on $PORT (main.go already honors PORT).
+runtime: go127
+
+instance_class: F1
+
+env_variables:
+  # Pooled Neon URL (host contains "-pooler") with ?sslmode=require.
+  DATABASE_URL: "${DATABASE_URL}"
+  # Console → Branch → Auth; same branch as DATABASE_URL.
+  NEON_AUTH_BASE_URL: "${NEON_AUTH_BASE_URL}"
+  # Browser origin(s) allowed to call POST /snap, comma-separated.
+  CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
+  # Public origin used to build shareable links in POST /snap responses.
+  PUBLIC_BASE_URL: "${PUBLIC_BASE_URL}"
+
+# Every instance keeps its own 25-connection pool and its own in-memory rate
+# limit counters. max_instances therefore caps both DB connections (25x) and
+# the effective per-user limit (5x). Raise deliberately.
+automatic_scaling:
+  min_instances: 0
+  max_instances: 3
+  max_concurrent_requests: 40
+  target_cpu_utilization: 0.65

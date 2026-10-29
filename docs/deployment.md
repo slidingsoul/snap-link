@@ -38,6 +38,60 @@ dependency-free liveness probe used by the container runtime.
 The app retries the initial Neon connection (5 attempts, linear backoff) so a
 scale-to-zero cold start doesn't fail the deploy.
 
+## Google App Engine (standard)
+
+App Engine builds the Go module directly — the `Dockerfile` is ignored — and
+injects `PORT`, which `main.go` already honors.
+
+One-time project setup (the region is permanent):
+
+```bash
+gcloud config set project PROJECT_ID
+gcloud app create --region=asia-southeast1   # co-locate with your Neon branch
+gcloud services enable appengine.googleapis.com cloudbuild.googleapis.com
+```
+
+Then deploy:
+
+```bash
+cp .env.deploy.example .env.deploy   # pooled DATABASE_URL, auth, direct URL for migrations
+chmod 600 .env.deploy
+./deploy.sh
+```
+
+`deploy.sh` renders `app.yaml` from `app.yaml.example` (gitignored, because App
+Engine only supports plaintext `env_variables`), applies migrations when
+`DIRECT_DATABASE_URL` is set, then runs `gcloud app deploy`.
+`./deploy.sh --render-only` writes `app.yaml` without deploying.
+
+Notes:
+
+- `runtime: go127`; the `go 1.25.11` directive in `go.mod` is satisfied.
+- Do **not** set `PORT` in `app.yaml` — App Engine reserves it.
+- `PUBLIC_BASE_URL` is optional: `deploy.sh` defaults it to
+  `https://<defaultHostname>`.
+- `CORS_ALLOWED_ORIGINS` is optional, but empty rejects all cross-origin
+  browser requests. Set it to the frontend origin.
+- `DIRECT_DATABASE_URL` is optional; if empty, migrations are skipped. The app
+  fatals on boot if `links` is missing.
+- `max_instances: 3` caps database connections (25 per instance) and the
+  effective per-user rate limit (5 per instance). Raise deliberately.
+- Add the App Engine URL to **Neon Console → Branch → Auth → trusted domains**
+  or Better Auth rejects the smoke test's `Origin`.
+- Deploys use your local working tree, not the pushed commit. Use a Cloud Build
+  trigger with `gcloud app deploy` for push-to-deploy.
+- Values in the deployed `app.yaml` are visible to project viewers. If that
+  matters, read the two secrets from Secret Manager in code instead.
+
+Verify:
+
+```bash
+BASE="https://$(gcloud app describe --format='value(defaultHostname)')"
+curl -fsS "$BASE/livez";  echo
+curl -fsS "$BASE/health"; echo
+gcloud app logs tail -s default
+```
+
 ## Docker (Local Development)
 
 ```bash
